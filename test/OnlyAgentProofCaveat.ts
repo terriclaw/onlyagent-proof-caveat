@@ -15,7 +15,9 @@ describe("OnlyAgentProofCaveat", function () {
   }
 
   function buildVeniceMessage(promptHash: string, responseHash: string): string {
-    return `${promptHash.toLowerCase()}:${responseHash.toLowerCase()}`;
+    const p = promptHash.toLowerCase().replace("0x", "");
+    const r = responseHash.toLowerCase().replace("0x", "");
+    return `${p}:${r}`;
   }
 
   async function buildValidInputs(
@@ -57,13 +59,13 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     await caveat.beforeHook(
-      ethers.ZeroAddress,
-      ethers.ZeroHash,
-      args,
-      ethers.ZeroAddress,
       terms,
+      args,
+      ethers.ZeroHash,
       "0x",
-      ethers.ZeroHash
+      ethers.ZeroHash,
+      ethers.ZeroAddress,
+      ethers.ZeroAddress
     );
   });
 
@@ -90,13 +92,13 @@ describe("OnlyAgentProofCaveat", function () {
 
     await expect(
       caveat.beforeHook(
-        ethers.ZeroAddress,
-        ethers.ZeroHash,
-        args,
-        ethers.ZeroAddress,
         terms,
+        args,
+        ethers.ZeroHash,
         "0x",
-        ethers.ZeroHash
+        ethers.ZeroHash,
+        ethers.ZeroAddress,
+        ethers.ZeroAddress
       )
     ).to.be.revertedWithCustomError(caveat, "InvalidSigner");
   });
@@ -122,13 +124,13 @@ describe("OnlyAgentProofCaveat", function () {
 
     await expect(
       caveat.beforeHook(
-        ethers.ZeroAddress,
-        ethers.ZeroHash,
-        args,
-        ethers.ZeroAddress,
         terms,
+        args,
+        ethers.ZeroHash,
         "0x",
-        ethers.ZeroHash
+        ethers.ZeroHash,
+        ethers.ZeroAddress,
+        ethers.ZeroAddress
       )
     ).to.be.revertedWithCustomError(caveat, "StaleProof");
   });
@@ -151,13 +153,13 @@ describe("OnlyAgentProofCaveat", function () {
 
     await expect(
       caveat.beforeHook(
-        ethers.ZeroAddress,
-        ethers.ZeroHash,
-        args,
-        ethers.ZeroAddress,
         mismatchedTerms,
+        args,
+        ethers.ZeroHash,
         "0x",
-        ethers.ZeroHash
+        ethers.ZeroHash,
+        ethers.ZeroAddress,
+        ethers.ZeroAddress
       )
     ).to.be.revertedWithCustomError(caveat, "WrongTarget");
   });
@@ -180,13 +182,13 @@ describe("OnlyAgentProofCaveat", function () {
 
     await expect(
       caveat.beforeHook(
-        ethers.ZeroAddress,
-        ethers.ZeroHash,
-        args,
-        ethers.ZeroAddress,
         wrongChainTerms,
+        args,
+        ethers.ZeroHash,
         "0x",
-        ethers.ZeroHash
+        ethers.ZeroHash,
+        ethers.ZeroAddress,
+        ethers.ZeroAddress
       )
     ).to.be.revertedWithCustomError(caveat, "WrongChain");
   });
