@@ -1,57 +1,50 @@
-# Sample Hardhat 3 Beta Project (`mocha` and `ethers`)
+# OnlyAgentProofCaveat
 
-This project showcases a Hardhat 3 Beta project using `mocha` for tests and the `ethers` library for Ethereum interactions.
+A CaveatEnforcer that verifies OnlyAgent-style AI execution proofs (TEE-signed) at the delegation layer.
 
-To learn more about the Hardhat 3 Beta, please visit the [Getting Started guide](https://hardhat.org/docs/getting-started#getting-started-with-hardhat-3). To share your feedback, join our [Hardhat 3 Beta](https://hardhat.org/hardhat3-beta-telegram-group) Telegram group or [open an issue](https://github.com/NomicFoundation/hardhat/issues/new) in our GitHub issue tracker.
+## What this is
 
-## Project Overview
+OnlyAgentProofCaveat moves OnlyAgent's verification model from:
 
-This example project includes:
+- contract-level (`onlyAgent` modifier)
 
-- A simple Hardhat configuration file.
-- Foundry-compatible Solidity unit tests.
-- TypeScript integration tests using `mocha` and ethers.js
-- Examples demonstrating how to connect to different types of networks, including locally simulating OP mainnet.
+to:
 
-## Usage
+- wallet / delegation-level (ERC-7710 caveat)
 
-### Running Tests
+This allows smart accounts to require verifiable AI execution before a transaction is allowed — without modifying target contracts.
 
-To run all the tests in the project, execute the following command:
+## What it verifies
 
-```shell
-npx hardhat test
-```
+- Venice-style TEE signature over `promptHash:responseHash`
+- Trusted signer (TEE provider)
+- Freshness (timestamp window)
+- Target binding
+- Chain binding
 
-You can also selectively run the Solidity or `mocha` tests:
+## What it does NOT verify
 
-```shell
-npx hardhat test solidity
-npx hardhat test mocha
-```
+- Prompt contents
+- Response contents
+- Decision correctness
 
-### Make a deployment to Sepolia
+It only proves: **a specific AI execution occurred inside a trusted TEE**
 
-This project includes an example Ignition module to deploy the contract. You can deploy this module to a locally simulated chain or to Sepolia.
+## Architecture difference
 
-To run the deployment to a local chain:
+- **OnlyAgent** → contract enforces proof
+- **OnlyAgentProofCaveat** → wallet enforces proof
 
-```shell
-npx hardhat ignition deploy ignition/modules/Counter.ts
-```
+This makes proof enforcement composable across any contract via delegation.
 
-To run the deployment to Sepolia, you need an account with funds to send the transaction. The provided Hardhat configuration includes a Configuration Variable called `SEPOLIA_PRIVATE_KEY`, which you can use to set the private key of the account you want to use.
+## Test coverage
 
-You can set the `SEPOLIA_PRIVATE_KEY` variable using the `hardhat-keystore` plugin or by setting it as an environment variable.
+- valid proof passes
+- invalid signer rejected
+- stale proof rejected
+- wrong target rejected
+- wrong chain rejected
 
-To set the `SEPOLIA_PRIVATE_KEY` config variable using `hardhat-keystore`:
+## Status
 
-```shell
-npx hardhat keystore set SEPOLIA_PRIVATE_KEY
-```
-
-After setting the variable, you can run the deployment with the Sepolia network:
-
-```shell
-npx hardhat ignition deploy --network sepolia ignition/modules/Counter.ts
-```
+v1 — minimal proof verification
