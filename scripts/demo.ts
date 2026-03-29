@@ -2,6 +2,23 @@ import { ethers } from "ethers";
 import * as dotenv from "dotenv";
 dotenv.config();
 
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+const RPC_URL            = process.env.BASE_RPC_URL!;
+const VENICE_API_KEY     = process.env.VENICE_API_KEY!;
+const TEE_SIGNER_ADDRESS = process.env.TEE_SIGNER_ADDRESS!;
+const DELEGATOR_PK       = process.env.DELEGATOR_PRIVATE_KEY!;
+const REDEEMER_PK        = process.env.REDEEMER_PRIVATE_KEY!;
+const CAVEAT_ADDRESS     = process.env.CAVEAT_ADDRESS!;
+const TARGET_ADDRESS     = process.env.TARGET_ADDRESS!;
+const DELEGATION_MANAGER = "0xdb9b1e94b5b69df7e401ddbede43491141047db3";
+const VENICE_MODEL       = "e2ee-qwen-2-5-7b-p";
+const VENICE_BASE        = "https://api.venice.ai/api/v1";
+
+const MODE_SINGLE_DEFAULT = ethers.ZeroHash;
+
+// ─── ABIs ─────────────────────────────────────────────────────────────────────
+
 const DELEGATION_MANAGER_ABI = [
   "function redeemDelegations(bytes[] permissionContexts, bytes32[] modes, bytes[] executionCallDatas) external payable",
   "function getDomainHash() external view returns (bytes32)",
@@ -11,16 +28,7 @@ const TARGET_ABI = [
   "function setValue(uint256 newValue) external",
 ];
 
-const RPC_URL               = process.env.BASE_RPC_URL!;
-const DELEGATOR_PK          = process.env.DELEGATOR_PRIVATE_KEY!;
-const REDEEMER_PK           = process.env.REDEEMER_PRIVATE_KEY!;
-const VENICE_SIGNER_PK      = process.env.VENICE_SIGNER_PRIVATE_KEY!;
-const CAVEAT_ADDRESS        = process.env.CAVEAT_ADDRESS!;
-const TARGET_ADDRESS        = process.env.TARGET_ADDRESS!;
-const DELEGATION_MANAGER    = "0xdb9b1e94b5b69df7e401ddbede43491141047db3";
-
-// SingleDefault: CALLTYPE_SINGLE (0x00) + EXECTYPE_DEFAULT (0x00) + zeroes
-const MODE_SINGLE_DEFAULT = ethers.ZeroHash;
+// ─── EIP-712 constants ────────────────────────────────────────────────────────
 
 const DELEGATION_TYPEHASH = ethers.keccak256(
   ethers.toUtf8Bytes(
@@ -34,13 +42,49 @@ const CAVEAT_TYPEHASH = ethers.keccak256(
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
 
-function buildVeniceMessage(promptHash: string, responseHash: string): string {
-  const p = promptHash.toLowerCase().replace("0x", "");
-  const r = responseHash.toLowerCase().replace("0x", "");
-  return `${p}:${r}`;
+// ─── Venice helpers ───────────────────────────────────────────────────────────
+
+async function callVenice(prompt: string) {
+  const res = await fetch(`${VENICE_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${VENICE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: VENICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      venice_parameters: {
+        include_venice_system_prompt: false,
+        strip_thinking_response: false,
+      },
+    }),
+  });
+
+  const teeConfirmed = res.headers.get("x-venice-tee") === "true";
+  const data = await res.json() as any;
+  if (data.error) throw new Error(`Venice error: ${JSON.stringify(data.error)}`);
+
+  return {
+    requestId: data.id as string,
+    response: data.choices[0].message.content as string,
+    teeConfirmed,
+  };
 }
 
-function encodeCaveatPacketHash(enforcer: string, terms: string): string {
+async function fetchVeniceSignature(requestId: string) {
+  const res = await fetch(
+    `${VENICE_BASE}/tee/signature?model=${VENICE_MODEL}&request_id=${requestId}`,
+    { headers: { Authorization: `Bearer ${VENICE_API_KEY}` } }
+  );
+  const data = await res.json() as any;
+  if (!data.signature) throw new Error(`Signature fetch failed: ${JSON.stringify(data)}`);
+  return data as { text: string; signature: string; signing_address: string };
+}
+
+// ─── Delegation helpers ───────────────────────────────────────────────────────
+
+function encodeCaveatHash(enforcer: string, terms: string): string {
   return ethers.keccak256(
     coder.encode(
       ["bytes32", "address", "bytes32"],
@@ -50,8 +94,8 @@ function encodeCaveatPacketHash(enforcer: string, terms: string): string {
 }
 
 function encodeCaveatArrayHash(caveats: { enforcer: string; terms: string }[]): string {
-  const hashes = caveats.map(c => encodeCaveatPacketHash(c.enforcer, c.terms));
-  return ethers.keccak256(ethers.concat(hashes.map(h => ethers.getBytes(h))));
+  const hashes = caveats.map(c => ethers.getBytes(encodeCaveatHash(c.enforcer, c.terms)));
+  return ethers.keccak256(ethers.concat(hashes));
 }
 
 function getDelegationHash(
@@ -64,20 +108,13 @@ function getDelegationHash(
   return ethers.keccak256(
     coder.encode(
       ["bytes32", "address", "address", "bytes32", "bytes32", "uint256"],
-      [
-        DELEGATION_TYPEHASH,
-        delegate,
-        delegator,
-        authority,
-        encodeCaveatArrayHash(caveats),
-        salt,
-      ]
+      [DELEGATION_TYPEHASH, delegate, delegator, authority, encodeCaveatArrayHash(caveats), salt]
     )
   );
 }
 
 async function signDelegation(
-  delegator: ethers.Wallet,
+  delegatorWallet: ethers.Wallet,
   domainHash: string,
   delegate: string,
   authority: string,
@@ -85,13 +122,8 @@ async function signDelegation(
   salt: bigint
 ): Promise<string> {
   const delegationHash = getDelegationHash(
-    delegate,
-    delegator.address,
-    authority,
-    caveats,
-    salt
+    delegate, delegatorWallet.address, authority, caveats, salt
   );
-
   const digest = ethers.keccak256(
     ethers.concat([
       ethers.toUtf8Bytes("\x19\x01"),
@@ -99,9 +131,10 @@ async function signDelegation(
       ethers.getBytes(delegationHash),
     ])
   );
-
-  return delegator.signingKey.sign(ethers.getBytes(digest)).serialized;
+  return delegatorWallet.signingKey.sign(ethers.getBytes(digest)).serialized;
 }
+
+// ─── Encoding helpers ─────────────────────────────────────────────────────────
 
 function encodeTerms(
   trustedSigner: string,
@@ -114,7 +147,8 @@ function encodeTerms(
 ): string {
   return coder.encode(
     ["tuple(address,uint256,address,uint256,bytes4,uint256,bytes32)"],
-    [[trustedSigner, maxAgeSeconds, requiredTarget, requiredChainId, requiredSelector, requiredValue, requiredCalldataHash]]
+    [[trustedSigner, maxAgeSeconds, requiredTarget, requiredChainId,
+      requiredSelector, requiredValue, requiredCalldataHash]]
   );
 }
 
@@ -134,41 +168,72 @@ function encodeExecution(target: string, value: bigint, callData: string): strin
   return coder.encode(["address", "uint256", "bytes"], [target, value, callData]);
 }
 
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
 async function main() {
-  const provider   = new ethers.JsonRpcProvider(RPC_URL);
-  const network    = await provider.getNetwork();
-  const delegator  = new ethers.Wallet(DELEGATOR_PK, provider);
-  const redeemer   = new ethers.Wallet(REDEEMER_PK, provider);
-  const veniceSigner = new ethers.Wallet(VENICE_SIGNER_PK, provider);
+  const provider  = new ethers.JsonRpcProvider(RPC_URL);
+  const network   = await provider.getNetwork();
+  const delegator = new ethers.Wallet(DELEGATOR_PK, provider);
+  const redeemer  = new ethers.Wallet(REDEEMER_PK, provider);
 
   const dm = new ethers.Contract(DELEGATION_MANAGER, DELEGATION_MANAGER_ABI, redeemer);
   const domainHash: string = await dm.getDomainHash();
 
-  const targetIface = new ethers.Interface(TARGET_ABI);
-  const callData    = targetIface.encodeFunctionData("setValue", [42]);
-  const selector    = callData.slice(0, 10);
-  const calldataHash = ethers.keccak256(callData);
-  const value       = 0n;
+  // ── Step 1: Get real Venice TEE proof ──────────────────────────────────────
+  console.log("=== OnlyAgentProofCaveat Integration Demo ===");
+  console.log("Network:          ", network.name, `(${network.chainId})`);
+  console.log("Delegator:        ", delegator.address);
+  console.log("Redeemer:         ", redeemer.address);
+  console.log("TEE signer:       ", TEE_SIGNER_ADDRESS);
+  console.log("DelegationManager:", DELEGATION_MANAGER);
+  console.log("Caveat:           ", CAVEAT_ADDRESS);
+  console.log("Target:           ", TARGET_ADDRESS);
+  console.log("");
 
-  const promptHash   = ethers.keccak256(ethers.toUtf8Bytes("Should delegated execution be allowed?"));
-  const responseHash = ethers.keccak256(ethers.toUtf8Bytes("YES"));
+  console.log("[1/5] Calling Venice TEE model...");
+  const prompt = "You are authorizing a delegated onchain action. Should this execution proceed? Reply YES or NO only.";
+  const { requestId, response, teeConfirmed } = await callVenice(prompt);
+  console.log("Request ID:   ", requestId);
+  console.log("TEE confirmed:", teeConfirmed);
+  console.log("Response:     ", response.trim());
+
+  console.log("\n[2/5] Fetching Venice TEE signature...");
+  const sigPayload = await fetchVeniceSignature(requestId);
+  console.log("Signed text:  ", sigPayload.text);
+
+  console.log("\n[3/5] Verifying Venice signature...");
+  const recovered = ethers.verifyMessage(sigPayload.text, sigPayload.signature);
+  if (recovered.toLowerCase() !== TEE_SIGNER_ADDRESS.toLowerCase()) {
+    throw new Error(`Signer mismatch: recovered ${recovered}, expected ${TEE_SIGNER_ADDRESS}`);
+  }
+  console.log("✓ Verified:", recovered);
+
+  const [promptHashRaw, responseHashRaw] = sigPayload.text.split(":");
+  const promptHash   = `0x${promptHashRaw.replace(/^0x/, "")}`;
+  const responseHash = `0x${responseHashRaw.replace(/^0x/, "")}`;
   const timestamp    = BigInt(Math.floor(Date.now() / 1000));
-  const veniceMsg    = buildVeniceMessage(promptHash, responseHash);
-  const proofSig     = await veniceSigner.signMessage(veniceMsg);
+
+  // ── Step 2: Build execution envelope ──────────────────────────────────────
+  const targetIface  = new ethers.Interface(TARGET_ABI);
+  const callData     = targetIface.encodeFunctionData("setValue", [42]);
+  const selector     = callData.slice(0, 10);
+  const calldataHash = ethers.keccak256(callData);
+  const value        = 0n;
+
+  // ── Step 3: Build and sign delegation ─────────────────────────────────────
+  console.log("\n[4/5] Building delegation...");
 
   const terms = encodeTerms(
-    veniceSigner.address, 120n, TARGET_ADDRESS,
+    TEE_SIGNER_ADDRESS, 120n, TARGET_ADDRESS,
     network.chainId, selector, value, calldataHash
   );
 
-  const args = encodeArgs(promptHash, responseHash, timestamp, proofSig);
-
+  const args = encodeArgs(promptHash, responseHash, timestamp, sigPayload.signature);
   const caveats = [{ enforcer: CAVEAT_ADDRESS, terms, args }];
-  const salt    = BigInt(ethers.hexlify(ethers.randomBytes(32)));
+  const salt = BigInt(ethers.hexlify(ethers.randomBytes(32)));
 
   const sig = await signDelegation(
-    delegator, domainHash, redeemer.address,
-    ethers.ZeroHash, caveats, salt
+    delegator, domainHash, redeemer.address, ethers.ZeroHash, caveats, salt
   );
 
   const delegation = {
@@ -189,16 +254,9 @@ async function main() {
   const badCallData = targetIface.encodeFunctionData("setValue", [999]);
   const invalidExec = encodeExecution(TARGET_ADDRESS, value, badCallData);
 
-  console.log("=== OnlyAgentProofCaveat Integration Demo ===");
-  console.log("Network:          ", network.name, `(${network.chainId})`);
-  console.log("Delegator:        ", delegator.address);
-  console.log("Redeemer:         ", redeemer.address);
-  console.log("Venice signer:    ", veniceSigner.address);
-  console.log("DelegationManager:", DELEGATION_MANAGER);
-  console.log("Caveat:           ", CAVEAT_ADDRESS);
-  console.log("Target:           ", TARGET_ADDRESS);
+  // ── Step 4: Redeem ─────────────────────────────────────────────────────────
+  console.log("\n[5/5] Redeeming delegations...");
   console.log("");
-
   console.log("=== CASE 1: valid proof + matching execution ===");
   try {
     const tx = await dm.redeemDelegations(
@@ -208,7 +266,7 @@ async function main() {
     const receipt = await tx.wait();
     console.log("SUCCESS in block:", receipt?.blockNumber);
   } catch (err: any) {
-    console.error("UNEXPECTED FAILURE:", err.message ?? err);
+    console.error("UNEXPECTED FAILURE:", err.message?.split("\n")[0] ?? err);
   }
 
   console.log("");
