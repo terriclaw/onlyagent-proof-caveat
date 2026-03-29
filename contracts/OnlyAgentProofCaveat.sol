@@ -62,7 +62,6 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
         bytes32 promptHash;
         bytes32 responseHash;
         uint256 timestamp;
-        address target;
         bytes signature;
     }
 
@@ -70,7 +69,7 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
         bytes calldata _terms,
         bytes calldata _args,
         ModeCode,
-        bytes calldata,
+        bytes calldata _executionCalldata,
         bytes32,
         address,
         address
@@ -80,7 +79,9 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
 
         if (block.timestamp > a.timestamp + t.maxAgeSeconds) revert StaleProof();
         if (block.chainid != t.requiredChainId) revert WrongChain();
-        if (a.target != t.requiredTarget) revert WrongTarget();
+
+        (address executionTarget,,) = abi.decode(_executionCalldata, (address, uint256, bytes));
+        if (executionTarget != t.requiredTarget) revert WrongTarget();
 
         bytes memory message = abi.encodePacked(
             _toHex(a.promptHash),

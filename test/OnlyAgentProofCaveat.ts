@@ -39,19 +39,24 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, target, chainId]]
     );
 
-    const args = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,address target,bytes signature)"],
-      [[promptHash, responseHash, now, target, signature]]
+    const executionCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes"],
+      [target, 0, "0x"]
     );
 
-    return { terms, args };
+    const args = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,bytes signature)"],
+      [[promptHash, responseHash, now, signature]]
+    );
+
+    return { terms, args, executionCalldata };
   }
 
   it("passes with a valid proof", async function () {
     const { ethers, caveat, trustedSigner, deployer } = await deployFixture();
     const net = await ethers.provider.getNetwork();
 
-    const { terms, args } = await buildValidInputs(
+    const { terms, args, executionCalldata } = await buildValidInputs(
       ethers,
       trustedSigner,
       deployer.address,
@@ -62,7 +67,7 @@ describe("OnlyAgentProofCaveat", function () {
       terms,
       args,
       ethers.ZeroHash,
-      "0x",
+      executionCalldata,
       ethers.ZeroHash,
       ethers.ZeroAddress,
       ethers.ZeroAddress
@@ -86,8 +91,13 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const args = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,address target,bytes signature)"],
-      [[promptHash, responseHash, now, deployer.address, badSignature]]
+      ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,bytes signature)"],
+      [[promptHash, responseHash, now, badSignature]]
+    );
+
+    const execCalldata1 = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes"],
+      [deployer.address, 0, "0x"]
     );
 
     await expect(
@@ -95,7 +105,7 @@ describe("OnlyAgentProofCaveat", function () {
         terms,
         args,
         ethers.ZeroHash,
-        "0x",
+        execCalldata1,
         ethers.ZeroHash,
         ethers.ZeroAddress,
         ethers.ZeroAddress
@@ -118,8 +128,13 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const args = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,address target,bytes signature)"],
-      [[promptHash, responseHash, 1, deployer.address, signature]]
+      ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,bytes signature)"],
+      [[promptHash, responseHash, 1, signature]]
+    );
+
+    const execCalldata2 = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes"],
+      [deployer.address, 0, "0x"]
     );
 
     await expect(
@@ -127,7 +142,7 @@ describe("OnlyAgentProofCaveat", function () {
         terms,
         args,
         ethers.ZeroHash,
-        "0x",
+        execCalldata2,
         ethers.ZeroHash,
         ethers.ZeroAddress,
         ethers.ZeroAddress
@@ -139,7 +154,7 @@ describe("OnlyAgentProofCaveat", function () {
     const { ethers, caveat, trustedSigner, deployer, other } = await deployFixture();
     const net = await ethers.provider.getNetwork();
 
-    const { args } = await buildValidInputs(
+    const { args, executionCalldata } = await buildValidInputs(
       ethers,
       trustedSigner,
       other.address,
@@ -156,7 +171,7 @@ describe("OnlyAgentProofCaveat", function () {
         mismatchedTerms,
         args,
         ethers.ZeroHash,
-        "0x",
+        executionCalldata,
         ethers.ZeroHash,
         ethers.ZeroAddress,
         ethers.ZeroAddress
@@ -168,7 +183,7 @@ describe("OnlyAgentProofCaveat", function () {
     const { ethers, caveat, trustedSigner, deployer } = await deployFixture();
     const net = await ethers.provider.getNetwork();
 
-    const { args } = await buildValidInputs(
+    const { args, executionCalldata } = await buildValidInputs(
       ethers,
       trustedSigner,
       deployer.address,
