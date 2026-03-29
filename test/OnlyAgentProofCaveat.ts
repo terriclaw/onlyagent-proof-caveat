@@ -35,8 +35,8 @@ describe("OnlyAgentProofCaveat", function () {
     const signature = await trustedSigner.signMessage(message);
 
     const terms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, target, chainId, "0xa9059cbb"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, target, chainId, "0xa9059cbb", 0]]
     );
 
     const selectorCalldata = "0xa9059cbb" + "0".repeat(64);
@@ -87,8 +87,8 @@ describe("OnlyAgentProofCaveat", function () {
     const badSignature = await other.signMessage(message);
 
     const terms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0]]
     );
 
     const args = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -124,8 +124,8 @@ describe("OnlyAgentProofCaveat", function () {
     const signature = await trustedSigner.signMessage(message);
 
     const terms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0]]
     );
 
     const args = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -163,8 +163,8 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const mismatchedTerms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0]]
     );
 
     await expect(
@@ -192,8 +192,8 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const wrongChainTerms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, deployer.address, net.chainId + 1n, "0xa9059cbb"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId + 1n, "0xa9059cbb", 0]]
     );
 
     await expect(
@@ -221,8 +221,8 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const wrongSelectorTerms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xdeadbeef"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xdeadbeef", 0]]
     );
 
     const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -255,8 +255,8 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const terms = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector)"],
-      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb"]]
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0]]
     );
 
     const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -275,4 +275,71 @@ describe("OnlyAgentProofCaveat", function () {
         ethers.ZeroAddress
       )
     ).to.be.revertedWithCustomError(caveat, "CalldataTooShort");
-  });});
+  });
+
+  it("reverts on wrong value", async function () {
+    const { ethers, caveat, trustedSigner, deployer } = await deployFixture();
+    const net = await ethers.provider.getNetwork();
+
+    const { args } = await buildValidInputs(
+      ethers,
+      trustedSigner,
+      deployer.address,
+      net.chainId
+    );
+
+    const wrongValueTerms = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 999]]
+    );
+
+    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes"],
+      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
+    );
+
+    await expect(
+      caveat.beforeHook(
+        wrongValueTerms,
+        args,
+        ethers.ZeroHash,
+        execCalldata,
+        ethers.ZeroHash,
+        ethers.ZeroAddress,
+        ethers.ZeroAddress
+      )
+    ).to.be.revertedWithCustomError(caveat, "WrongValue");
+  });
+
+  it("passes with correct value", async function () {
+    const { ethers, caveat, trustedSigner, deployer } = await deployFixture();
+    const net = await ethers.provider.getNetwork();
+
+    const { args } = await buildValidInputs(
+      ethers,
+      trustedSigner,
+      deployer.address,
+      net.chainId
+    );
+
+    const terms = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["tuple(address trustedSigner,uint256 maxAgeSeconds,address requiredTarget,uint256 requiredChainId,bytes4 requiredSelector,uint256 requiredValue)"],
+      [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0]]
+    );
+
+    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["address", "uint256", "bytes"],
+      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
+    );
+
+    await caveat.beforeHook(
+      terms,
+      args,
+      ethers.ZeroHash,
+      execCalldata,
+      ethers.ZeroHash,
+      ethers.ZeroAddress,
+      ethers.ZeroAddress
+    );
+  });
+});

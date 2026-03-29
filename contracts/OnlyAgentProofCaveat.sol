@@ -52,6 +52,7 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
     error WrongChain();
     error WrongSelector();
     error CalldataTooShort();
+    error WrongValue();
 
     struct Terms {
         address trustedSigner;
@@ -59,6 +60,7 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
         address requiredTarget;
         uint256 requiredChainId;
         bytes4  requiredSelector;
+        uint256 requiredValue;
     }
 
     struct Args {
@@ -83,11 +85,12 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
         if (block.timestamp > a.timestamp + t.maxAgeSeconds) revert StaleProof();
         if (block.chainid != t.requiredChainId) revert WrongChain();
 
-        (address executionTarget,, bytes memory callData) = abi.decode(
+        (address executionTarget, uint256 executionValue, bytes memory callData) = abi.decode(
             _executionCalldata, (address, uint256, bytes)
         );
 
         if (executionTarget != t.requiredTarget) revert WrongTarget();
+        if (executionValue != t.requiredValue) revert WrongValue();
 
         if (callData.length < 4) revert CalldataTooShort();
         bytes4 selector = bytes4(callData[0]) |
