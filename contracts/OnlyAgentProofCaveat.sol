@@ -53,6 +53,7 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
     error WrongSelector();
     error CalldataTooShort();
     error WrongValue();
+    error WrongCalldataHash();
 
     struct Terms {
         address trustedSigner;
@@ -61,6 +62,7 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
         uint256 requiredChainId;
         bytes4  requiredSelector;
         uint256 requiredValue;
+        bytes32 requiredCalldataHash;
     }
 
     struct Args {
@@ -91,6 +93,7 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
 
         if (executionTarget != t.requiredTarget) revert WrongTarget();
         if (executionValue != t.requiredValue) revert WrongValue();
+        if (t.requiredCalldataHash != bytes32(0) && keccak256(callData) != t.requiredCalldataHash) revert WrongCalldataHash();
 
         if (callData.length < 4) revert CalldataTooShort();
         bytes4 selector = bytes4(callData[0]) |
