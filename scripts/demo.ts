@@ -1,4 +1,9 @@
 import { ethers } from "ethers";
+import { createPublicClient, createWalletClient, http } from "viem";
+import { base } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
+import { Implementation, toMetaMaskSmartAccount, createDelegation, createExecution, ExecutionMode, ScopeType, contracts } from "@metamask/smart-accounts-kit";
+const { DelegationManager } = contracts;
 import * as dotenv from "dotenv";
 dotenv.config();
 
@@ -7,42 +12,20 @@ dotenv.config();
 const RPC_URL            = process.env.BASE_RPC_URL!;
 const VENICE_API_KEY     = process.env.VENICE_API_KEY!;
 const TEE_SIGNER_ADDRESS = process.env.TEE_SIGNER_ADDRESS!;
-const DELEGATOR_PK       = process.env.DELEGATOR_PRIVATE_KEY!;
-const REDEEMER_PK        = process.env.REDEEMER_PRIVATE_KEY!;
-const CAVEAT_ADDRESS     = process.env.CAVEAT_ADDRESS!;
-const TARGET_ADDRESS     = process.env.TARGET_ADDRESS!;
-const DELEGATION_MANAGER = "0xdb9b1e94b5b69df7e401ddbede43491141047db3";
+const DELEGATOR_PK       = process.env.DELEGATOR_PRIVATE_KEY! as `0x${string}`;
+const REDEEMER_PK        = process.env.REDEEMER_PRIVATE_KEY! as `0x${string}`;
+const CAVEAT_ADDRESS     = process.env.CAVEAT_ADDRESS! as `0x${string}`;
+const TARGET_ADDRESS     = process.env.TARGET_ADDRESS! as `0x${string}`;
 const VENICE_MODEL       = "e2ee-qwen-2-5-7b-p";
 const VENICE_BASE        = "https://api.venice.ai/api/v1";
 const BASESCAN           = "https://basescan.org/tx";
 
-const MODE_SINGLE_DEFAULT = ethers.ZeroHash;
-
 // ─── ABIs ─────────────────────────────────────────────────────────────────────
-
-const DELEGATION_MANAGER_ABI = [
-  "function redeemDelegations(bytes[] permissionContexts, bytes32[] modes, bytes[] executionCallDatas) external payable",
-  "function getDomainHash() external view returns (bytes32)",
-];
 
 const TARGET_ABI = [
   "function setValue(uint256 newValue) external",
   "function value() view returns (uint256)",
 ];
-
-// ─── EIP-712 ──────────────────────────────────────────────────────────────────
-
-const DELEGATION_TYPEHASH = ethers.keccak256(
-  ethers.toUtf8Bytes(
-    "Delegation(address delegate,address delegator,bytes32 authority,Caveat[] caveats,uint256 salt)Caveat(address enforcer,bytes terms)"
-  )
-);
-
-const CAVEAT_TYPEHASH = ethers.keccak256(
-  ethers.toUtf8Bytes("Caveat(address enforcer,bytes terms)")
-);
-
-const coder = ethers.AbiCoder.defaultAbiCoder();
 
 // ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -54,8 +37,7 @@ function section(title: string) {
 }
 
 function field(label: string, value: string) {
-  const pad = 22;
-  console.log(`  ${label.padEnd(pad)} ${value}`);
+  console.log(`  ${label.padEnd(22)} ${value}`);
 }
 
 function truncate(str: string, n = 20): string {
@@ -67,31 +49,18 @@ function truncate(str: string, n = 20): string {
 async function callVenice(prompt: string) {
   const res = await fetch(`${VENICE_BASE}/chat/completions`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${VENICE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${VENICE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: VENICE_MODEL,
       messages: [{ role: "user", content: prompt }],
-      venice_parameters: {
-        include_venice_system_prompt: false,
-        strip_thinking_response: false,
-      },
+      venice_parameters: { include_venice_system_prompt: false, strip_thinking_response: false },
     }),
   });
-
   const teeConfirmed = res.headers.get("x-venice-tee") === "true";
   const teeProvider  = res.headers.get("x-venice-tee-provider") ?? "unknown";
   const data = await res.json() as any;
   if (data.error) throw new Error(`Venice error: ${JSON.stringify(data.error)}`);
-
-  return {
-    requestId:    data.id as string,
-    response:     data.choices[0].message.content as string,
-    teeConfirmed,
-    teeProvider,
-  };
+  return { requestId: data.id as string, response: data.choices[0].message.content as string, teeConfirmed, teeProvider };
 }
 
 async function fetchVeniceSignature(requestId: string) {
@@ -104,67 +73,13 @@ async function fetchVeniceSignature(requestId: string) {
   return data as { text: string; signature: string; signing_address: string };
 }
 
-// ─── Delegation helpers ───────────────────────────────────────────────────────
-
-function encodeCaveatHash(enforcer: string, terms: string): string {
-  return ethers.keccak256(
-    coder.encode(
-      ["bytes32", "address", "bytes32"],
-      [CAVEAT_TYPEHASH, enforcer, ethers.keccak256(terms)]
-    )
-  );
-}
-
-function encodeCaveatArrayHash(caveats: { enforcer: string; terms: string }[]): string {
-  const hashes = caveats.map(c => ethers.getBytes(encodeCaveatHash(c.enforcer, c.terms)));
-  return ethers.keccak256(ethers.concat(hashes));
-}
-
-function getDelegationHash(
-  delegate: string,
-  delegator: string,
-  authority: string,
-  caveats: { enforcer: string; terms: string }[],
-  salt: bigint
-): string {
-  return ethers.keccak256(
-    coder.encode(
-      ["bytes32", "address", "address", "bytes32", "bytes32", "uint256"],
-      [DELEGATION_TYPEHASH, delegate, delegator, authority, encodeCaveatArrayHash(caveats), salt]
-    )
-  );
-}
-
-async function signDelegation(
-  delegatorWallet: ethers.Wallet,
-  domainHash: string,
-  delegate: string,
-  authority: string,
-  caveats: { enforcer: string; terms: string }[],
-  salt: bigint
-): Promise<string> {
-  const delegationHash = getDelegationHash(
-    delegate, delegatorWallet.address, authority, caveats, salt
-  );
-  const digest = ethers.keccak256(
-    ethers.concat([
-      ethers.toUtf8Bytes("\x19\x01"),
-      ethers.getBytes(domainHash),
-      ethers.getBytes(delegationHash),
-    ])
-  );
-  return delegatorWallet.signingKey.sign(ethers.getBytes(digest)).serialized;
-}
-
 // ─── Encoding ─────────────────────────────────────────────────────────────────
 
+const coder = ethers.AbiCoder.defaultAbiCoder();
+
 function encodeTerms(
-  trustedSigner: string,
-  maxAgeSeconds: bigint,
-  requiredTarget: string,
-  requiredChainId: bigint,
-  requiredSelector: string,
-  requiredValue: bigint,
+  trustedSigner: string, maxAgeSeconds: bigint, requiredTarget: string,
+  requiredChainId: bigint, requiredSelector: string, requiredValue: bigint,
   requiredCalldataHash: string
 ): string {
   return coder.encode(
@@ -174,44 +89,42 @@ function encodeTerms(
   );
 }
 
-function encodeArgs(
-  promptHash: string,
-  responseHash: string,
-  timestamp: bigint,
-  signature: string
-): string {
+function encodeArgs(promptHash: string, responseHash: string, timestamp: bigint, signature: string): string {
   return coder.encode(
     ["tuple(bytes32,bytes32,uint256,bytes)"],
     [[promptHash, responseHash, timestamp, signature]]
   );
 }
 
-function encodeExecution(target: string, value: bigint, callData: string): string {
-  return coder.encode(["address", "uint256", "bytes"], [target, value, callData]);
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const provider  = new ethers.JsonRpcProvider(RPC_URL);
-  const network   = await provider.getNetwork();
-  const delegator = new ethers.Wallet(DELEGATOR_PK, provider);
-  const redeemer  = new ethers.Wallet(REDEEMER_PK, provider);
+  const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
 
-  const dm = new ethers.Contract(DELEGATION_MANAGER, DELEGATION_MANAGER_ABI, redeemer);
-  const domainHash: string = await dm.getDomainHash();
+  const delegatorOwner = privateKeyToAccount(DELEGATOR_PK);
+  const redeemerAccount = privateKeyToAccount(REDEEMER_PK);
 
-  const targetContract = new ethers.Contract(TARGET_ADDRESS, TARGET_ABI, provider);
+  // ── Smart account as delegator ────────────────────────────────────────────
+  section("SETTING UP SMART ACCOUNT DELEGATOR");
+  console.log("  Creating HybridDeleGator smart account...");
 
-  section("ONLYAGENT PROOF CAVEAT — INTEGRATION DEMO");
-  field("Network",           `${network.name} (chainId: ${network.chainId})`);
-  field("DelegationManager", DELEGATION_MANAGER);
-  field("Caveat",            CAVEAT_ADDRESS);
-  field("Target",            TARGET_ADDRESS);
-  field("Delegator",         delegator.address);
-  field("Redeemer",          redeemer.address);
-  field("TEE signer",        TEE_SIGNER_ADDRESS);
-  field("Domain hash",       truncate(domainHash));
+  const smartAccount = await toMetaMaskSmartAccount({
+    client: publicClient,
+    implementation: Implementation.Hybrid,
+    deployParams: [delegatorOwner.address, [], [], []],
+    deploySalt: "0x",
+    signer: { account: delegatorOwner },
+  });
+
+  const environment = smartAccount.environment;
+
+  field("Smart account (delegator)", smartAccount.address);
+  field("Owner EOA",                 delegatorOwner.address);
+  field("Redeemer EOA",              redeemerAccount.address);
+  field("TEE signer",                TEE_SIGNER_ADDRESS);
+  field("DelegationManager",         environment.DelegationManager);
+  field("Caveat",                    CAVEAT_ADDRESS);
+  field("Target",                    TARGET_ADDRESS);
 
   // ── Step 1: Venice TEE inference ──────────────────────────────────────────
   section("STEP 1 — Venice TEE Inference");
@@ -221,7 +134,6 @@ async function main() {
   console.log("  Calling Venice...");
 
   const { requestId, response, teeConfirmed, teeProvider } = await callVenice(prompt);
-
   field("Request ID",    requestId);
   field("TEE confirmed", String(teeConfirmed));
   field("TEE provider",  teeProvider);
@@ -230,15 +142,13 @@ async function main() {
   // ── Step 2: Fetch TEE signature ───────────────────────────────────────────
   section("STEP 2 — Venice TEE Signature");
   const sigPayload = await fetchVeniceSignature(requestId);
-
-  field("Signed text",      sigPayload.text);
-  field("Signature",        truncate(sigPayload.signature));
-  field("Signing address",  sigPayload.signing_address);
+  field("Signed text",     sigPayload.text);
+  field("Signature",       truncate(sigPayload.signature));
+  field("Signing address", sigPayload.signing_address);
 
   // ── Step 3: Verify signature ──────────────────────────────────────────────
   section("STEP 3 — Signature Verification");
   const recovered = ethers.verifyMessage(sigPayload.text, sigPayload.signature);
-
   field("Recovered signer", recovered);
   field("Expected signer",  TEE_SIGNER_ADDRESS);
   field("Match",            recovered.toLowerCase() === TEE_SIGNER_ADDRESS.toLowerCase() ? "✓ YES" : "✗ NO");
@@ -264,79 +174,107 @@ async function main() {
   const calldataHash = ethers.keccak256(callData);
   const value        = 0n;
 
-  field("Function",       "setValue(42)");
-  field("Selector",       selector);
-  field("Calldata hash",  truncate(calldataHash));
-  field("Value (ETH)",    "0");
-  field("Target",         TARGET_ADDRESS);
+  field("Function",      "setValue(42)");
+  field("Selector",      selector);
+  field("Calldata hash", truncate(calldataHash));
+  field("Value (ETH)",   "0");
+  field("Target",        TARGET_ADDRESS);
 
-  // ── Step 5: Build delegation ──────────────────────────────────────────────
-  section("STEP 5 — Delegation Construction");
-
+  // ── Step 5: Build caveat terms and args ───────────────────────────────────
+  section("STEP 5 — Caveat Encoding");
   const terms = encodeTerms(
     TEE_SIGNER_ADDRESS, 120n, TARGET_ADDRESS,
-    network.chainId, selector, value, calldataHash
+    BigInt(base.id), selector, value, calldataHash
   );
-
   const args = encodeArgs(promptHash, responseHash, timestamp, sigPayload.signature);
-  const caveats = [{ enforcer: CAVEAT_ADDRESS, terms, args }];
-  const salt = BigInt(ethers.hexlify(ethers.randomBytes(32)));
 
-  const sig = await signDelegation(
-    delegator, domainHash, redeemer.address, ethers.ZeroHash, caveats, salt
-  );
+  field("Caveat enforcer", CAVEAT_ADDRESS);
+  field("Terms",           truncate(terms));
+  field("Args",            truncate(args));
 
-  const delegationHash = getDelegationHash(
-    redeemer.address, delegator.address, ethers.ZeroHash, caveats, salt
-  );
+  // ── Step 6: Create and sign delegation ────────────────────────────────────
+  section("STEP 6 — Delegation Construction");
 
-  field("Caveat enforcer",  CAVEAT_ADDRESS);
-  field("Delegation hash",  truncate(delegationHash));
-  field("Salt",             truncate(salt.toString()));
-  field("Delegation sig",   truncate(sig));
+  const delegation = createDelegation({
+    to: redeemerAccount.address,
+    from: smartAccount.address,
+    environment,
+    scope: {
+      type: ScopeType.FunctionCall,
+      targets: [TARGET_ADDRESS as `0x${string}`],
+      selectors: [selector as `0x${string}`],
+    },
+    caveats: [
+      {
+        enforcer: CAVEAT_ADDRESS,
+        terms: terms as `0x${string}`,
+        args: args as `0x${string}`,
+      }
+    ],
+  });
 
-  const delegation = {
-    delegate:  redeemer.address,
-    delegator: delegator.address,
-    authority: ethers.ZeroHash,
-    caveats:   caveats.map(c => ({ ...c, args: c.args })),
-    salt,
-    signature: sig,
-  };
+  const signature = await smartAccount.signDelegation({ delegation });
+  const signedDelegation = { ...delegation, signature };
 
-  const permissionContext = coder.encode(
-    ["tuple(address delegate,address delegator,bytes32 authority,tuple(address enforcer,bytes terms,bytes args)[] caveats,uint256 salt,bytes signature)[]"],
-    [[delegation]]
-  );
+  field("Delegator",       smartAccount.address);
+  field("Delegate",        redeemerAccount.address);
+  field("Signature",       truncate(signature));
 
-  const validExec   = encodeExecution(TARGET_ADDRESS, value, callData);
+  // ── Step 7: Encode redemption ─────────────────────────────────────────────
+  section("STEP 7 — Redemption Encoding");
+
+  const validExecution = createExecution({
+    target: TARGET_ADDRESS,
+    callData: callData as `0x${string}`,
+  });
+
   const badCallData = targetIface.encodeFunctionData("setValue", [999]);
-  const invalidExec = encodeExecution(TARGET_ADDRESS, value, badCallData);
+  const invalidExecution = createExecution({
+    target: TARGET_ADDRESS,
+    callData: badCallData as `0x${string}`,
+  });
 
-  // ── Case 1: Valid redemption ──────────────────────────────────────────────
+  const validRedeemCalldata = DelegationManager.encode.redeemDelegations({
+    delegations: [[signedDelegation]],
+    modes: [ExecutionMode.SingleDefault],
+    executions: [[validExecution]],
+  });
+
+  const invalidRedeemCalldata = DelegationManager.encode.redeemDelegations({
+    delegations: [[signedDelegation]],
+    modes: [ExecutionMode.SingleDefault],
+    executions: [[invalidExecution]],
+  });
+
+  field("Valid calldata",   truncate(validRedeemCalldata));
+  field("Invalid calldata", truncate(invalidRedeemCalldata));
+
+  // ── Step 8: Redeem via EOA tx ─────────────────────────────────────────────
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const redeemerWallet = new ethers.Wallet(REDEEMER_PK, provider);
+  const targetContract = new ethers.Contract(TARGET_ADDRESS, TARGET_ABI, provider);
+
   section("CASE 1 — Valid Proof + Matching Execution");
   console.log("  Expected: PASS");
-  console.log("  Calling DelegationManager.redeemDelegations...");
   console.log("");
 
   const valueBefore = await targetContract.value();
   field("Target value before", String(valueBefore));
 
   try {
-    const tx = await dm.redeemDelegations(
-      [permissionContext], [MODE_SINGLE_DEFAULT], [validExec]
-    );
-    field("TX hash",    tx.hash);
-    field("Basescan",   `${BASESCAN}/${tx.hash}`);
+    const tx = await redeemerWallet.sendTransaction({
+      to: environment.DelegationManager,
+      data: validRedeemCalldata,
+    });
+    field("TX hash",  tx.hash);
+    field("Basescan", `${BASESCAN}/${tx.hash}`);
     console.log("");
     console.log("  Waiting for confirmation...");
     const receipt = await tx.wait();
-    field("Block",      String(receipt?.blockNumber));
-    field("Gas used",   String(receipt?.gasUsed));
-
+    field("Block",    String(receipt?.blockNumber));
+    field("Gas used", String(receipt?.gasUsed));
     const valueAfter = await targetContract.value();
     field("Target value after", String(valueAfter));
-
     console.log("");
     console.log("  ✓ PASS — caveat allowed execution");
   } catch (err: any) {
@@ -344,19 +282,18 @@ async function main() {
     console.log("  Reason:", err.message?.split("\n")[0] ?? err);
   }
 
-  // ── Case 2: Invalid redemption ────────────────────────────────────────────
   section("CASE 2 — Valid Proof + Wrong Calldata (should revert)");
   console.log("  Expected: REVERT");
-  console.log("  Calling DelegationManager.redeemDelegations with setValue(999)...");
   console.log("");
 
   try {
-    const tx = await dm.redeemDelegations(
-      [permissionContext], [MODE_SINGLE_DEFAULT], [invalidExec]
-    );
+    const tx = await redeemerWallet.sendTransaction({
+      to: environment.DelegationManager,
+      data: invalidRedeemCalldata,
+    });
     field("TX hash", tx.hash);
     await tx.wait();
-    console.log("  ✗ FAIL — should have reverted but did not");
+    console.log("  ✗ FAIL — should have reverted");
   } catch (err: any) {
     console.log("  ✓ PASS — caveat blocked execution as expected");
     console.log("  Revert reason:", err.message?.split("\n")[0] ?? err);
@@ -364,7 +301,8 @@ async function main() {
 
   section("DEMO COMPLETE");
   console.log("  OnlyAgentProofCaveat is load-bearing on Base Mainnet.");
-  console.log("  Real Venice TEE proof required. Wrong execution envelope blocked.");
+  console.log("  Real Venice TEE proof required.");
+  console.log("  Wrong execution envelope blocked.");
   console.log("");
 }
 

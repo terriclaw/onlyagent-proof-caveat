@@ -40,10 +40,12 @@ describe("OnlyAgentProofCaveat", function () {
     );
 
     const selectorCalldata = "0xa9059cbb" + "0".repeat(64);
-    const executionCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [target, 0, selectorCalldata]
-    );
+    // ERC-7579 packed format: target (20 bytes) + value (32 bytes) + callData
+    const executionCalldata = ethers.concat([
+      target,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      selectorCalldata,
+    ]);
 
     const args = ethers.AbiCoder.defaultAbiCoder().encode(
       ["tuple(bytes32 promptHash,bytes32 responseHash,uint256 timestamp,bytes signature)"],
@@ -96,10 +98,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[promptHash, responseHash, now, badSignature]]
     );
 
-    const execCalldata1 = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
-    );
+    const execCalldata1 = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0xa9059cbb" + "0".repeat(64),
+    ]);
 
     await expect(
       caveat.beforeHook(
@@ -133,10 +136,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[promptHash, responseHash, 1, signature]]
     );
 
-    const execCalldata2 = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
-    );
+    const execCalldata2 = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0xa9059cbb" + "0".repeat(64),
+    ]);
 
     await expect(
       caveat.beforeHook(
@@ -225,10 +229,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, deployer.address, net.chainId, "0xdeadbeef", 0, ethers.keccak256("0xa9059cbb" + "0".repeat(64))]]
     );
 
-    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
-    );
+    const execCalldata = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0xa9059cbb" + "0".repeat(64),
+    ]);
 
     await expect(
       caveat.beforeHook(
@@ -259,10 +264,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0, ethers.ZeroHash]]
     );
 
-    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0x"]
-    );
+    const execCalldata = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0x",
+    ]);
 
     await expect(
       caveat.beforeHook(
@@ -293,10 +299,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 999, ethers.keccak256("0xa9059cbb" + "0".repeat(64))]]
     );
 
-    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
-    );
+    const execCalldata = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0xa9059cbb" + "0".repeat(64),
+    ]);
 
     await expect(
       caveat.beforeHook(
@@ -327,10 +334,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0, ethers.keccak256("0xa9059cbb" + "0".repeat(64))]]
     );
 
-    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
-    );
+    const execCalldata = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0xa9059cbb" + "0".repeat(64),
+    ]);
 
     await caveat.beforeHook(
       terms,
@@ -359,10 +367,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0, ethers.keccak256("0xdeadbeef")]]
     );
 
-    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, "0xa9059cbb" + "0".repeat(64)]
-    );
+    const execCalldata = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      "0xa9059cbb" + "0".repeat(64),
+    ]);
 
     await expect(
       caveat.beforeHook(
@@ -396,10 +405,11 @@ describe("OnlyAgentProofCaveat", function () {
       [[trustedSigner.address, 120, deployer.address, net.chainId, "0xa9059cbb", 0, correctHash]]
     );
 
-    const execCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["address", "uint256", "bytes"],
-      [deployer.address, 0, callData]
-    );
+    const execCalldata = ethers.concat([
+      deployer.address,
+      ethers.zeroPadValue(ethers.toBeHex(0), 32),
+      callData,
+    ]);
 
     await caveat.beforeHook(
       terms,

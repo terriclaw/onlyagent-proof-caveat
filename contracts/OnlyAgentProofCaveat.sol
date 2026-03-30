@@ -87,9 +87,10 @@ contract OnlyAgentProofCaveat is ICaveatEnforcer {
         if (block.timestamp > a.timestamp + t.maxAgeSeconds) revert StaleProof();
         if (block.chainid != t.requiredChainId) revert WrongChain();
 
-        (address executionTarget, uint256 executionValue, bytes memory callData) = abi.decode(
-            _executionCalldata, (address, uint256, bytes)
-        );
+        // ERC-7579 packed execution format: target (20 bytes) + value (32 bytes) + callData (rest)
+        address executionTarget = address(bytes20(_executionCalldata[0:20]));
+        uint256 executionValue  = uint256(bytes32(_executionCalldata[20:52]));
+        bytes memory callData   = _executionCalldata[52:];
 
         if (executionTarget != t.requiredTarget) revert WrongTarget();
         if (executionValue != t.requiredValue) revert WrongValue();
