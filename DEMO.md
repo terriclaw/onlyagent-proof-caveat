@@ -13,10 +13,13 @@ A single signed Venice TEE proof was reused across two executions:
 
 The caveat enforces:
 ```
-(promptHash, responseHash, executionHash) must match
+(promptHash, responseHash, executionHash, chainId, timestamp) must match
 ```
 
-The proof is not reusable across different executions.
+The executionHash is derived from the ERC-7579 packed execution:
+`keccak256(abi.encodePacked(target, value, calldata))`
+
+The proof is not reusable across different executions or chains.
 
 ## Verified TX
 
