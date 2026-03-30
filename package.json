@@ -26,5 +26,8 @@
     "mocha": "^11.7.5",
     "typescript": "~5.8.0"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "dotenv": "^17.3.1"
+  }
 }
