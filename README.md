@@ -1,127 +1,225 @@
 # OnlyAgentProofCaveat
 
-A CaveatEnforcer that requires attested AI inference as a prerequisite for delegated execution.
+An ERC-7710 CaveatEnforcer that requires attested AI inference as a prerequisite for delegated execution — with execution-bound, non-reusable authorization enforced onchain.
+
+---
+
+## Primitive
+
+**Non-reusable, execution-bound AI authorization at the delegation layer.**
+
+A valid proof can only authorize one specific execution:
+```
+(promptHash, responseHash, executionHash, chainId, timestamp) must match
+```
+
+- `executionHash = keccak256(abi.encodePacked(target, value, calldata))` (ERC-7579)
+- Reuse across different calldata, targets, chains, or time windows fails onchain
+
+---
 
 ## What this is
 
-OnlyAgentProofCaveat moves OnlyAgent's verification model from:
+OnlyAgentProofCaveat moves OnlyAgent from:
 
-- contract-level (`onlyAgent` modifier)
+- contract-level enforcement (`onlyAgent` modifier)
 
 to:
 
-- wallet / delegation-level (ERC-7710 caveat)
+- wallet / delegation-level enforcement (ERC-7710 caveat)
 
-This allows smart accounts to require verifiable AI execution before a transaction is allowed — without modifying target contracts.
+This allows any smart account to require verifiable AI execution **without modifying target contracts**.
+
+---
 
 ## What it enforces
 
-The caveat enforces two distinct layers:
+Two distinct layers:
 
-**TEE attestation (offchain, signed by Venice enclave):**
-- A Venice TEE executed a model inference
-- `promptHash:responseHash` was signed by a trusted enclave signer
+### 1. TEE Attestation (offchain, signed)
 
-**Execution envelope (onchain, enforced at redemption time):**
-- Chain binding
-- Freshness (timestamp window)
-- Target address (derived from `_executionCalldata`)
-- Function selector (first 4 bytes of calldata)
-- ETH value
-- Calldata hash (`keccak256(callData)`)
+- A Venice TEE executes model inference
+- Produces `promptHash` and `responseHash`
+- Signs `promptHash:responseHash`
+- Signature is verified against a trusted enclave signer
 
-The caveat will only allow a delegation to be redeemed if a valid attested inference proof exists **and** the execution matches the exact envelope specified in the delegation terms.
+### 2. Execution Enforcement (onchain, caveat)
 
-## Attestation vs Enforcement
+At redemption time, the caveat enforces:
 
-OnlyAgentProofCaveat separates two layers of guarantees:
+- **Signer** — must match trusted TEE signer
+- **Freshness** — `timestamp <= block.timestamp <= timestamp + maxAgeSeconds`
+- **Chain binding** — `block.chainid == requiredChainId`
+- **Execution binding** — derived from actual execution payload:
+  - `target`
+  - `selector`
+  - `value`
+  - `calldata hash`
 
-**TEE attestation (offchain, signed):**
-- A Venice TEE executed a model inference
-- `promptHash:responseHash` was signed by a trusted enclave
+All fields are verified **onchain**.
 
-**Caveat enforcement (onchain, verified):**
-- Chain binding
-- Freshness (timestamp window)
-- Target, selector, value, and calldata hash — all derived from `_executionCalldata`
-
-The TEE does not sign the execution calldata.
-All execution constraints are enforced at the caveat layer during delegation redemption.
+---
 
 ## Execution binding model
 
-The caveat decodes the delegated execution payload:
+The proof is bound to a specific execution:
 ```
-(address target, uint256 value, bytes callData)
+executionHash = keccak256(abi.encodePacked(target, value, calldata))
 ```
 
-and enforces all constraints against the actual execution, not redeemer-supplied metadata.
+- The same proof **cannot** authorize different calldata
+- The same proof **cannot** be replayed on another chain
+- The same proof **expires** after `maxAgeSeconds`
 
-`requiredCalldataHash` is optional — set to `bytes32(0)` to skip calldata hash enforcement.
+This makes authorization deterministic, non-transferable, and non-replayable.
+
+---
+
+## Execution decoding (ERC-7579)
+
+Delegation Framework encodes execution as packed bytes:
+```
+target (20 bytes) | value (32 bytes) | calldata (remaining bytes)
+```
+
+The caveat decodes it as:
+```solidity
+address target = address(bytes20(data[0:20]));
+uint256 value  = uint256(bytes32(data[20:52]));
+bytes calldata = data[52:];
+```
+
+This is not ABI encoding. Using `abi.decode(...)` is incorrect.
+
+---
+
+## Attestation vs Enforcement
+
+The system deliberately separates:
+
+**Offchain (TEE)**
+- Executes model inference
+- Signs `(promptHash, responseHash)`
+- Does not sign execution calldata
+
+**Onchain (caveat)**
+- Binds proof to execution
+- Enforces all constraints deterministically
+- Decides allow vs revert
+
+This ensures inference remains opaque and enforcement remains trust-minimized.
+
+---
 
 ## Terms
 ```solidity
 struct Terms {
-    address trustedSigner;       // Venice TEE signer address
-    uint256 maxAgeSeconds;       // proof freshness window
-    address requiredTarget;      // must match execution target
-    uint256 requiredChainId;     // must match block.chainid
-    bytes4  requiredSelector;    // must match first 4 bytes of calldata
-    uint256 requiredValue;       // must match ETH value
-    bytes32 requiredCalldataHash; // keccak256(callData), or bytes32(0) to skip
+    address trustedSigner;
+    uint256 maxAgeSeconds;
+    address requiredTarget;
+    uint256 requiredChainId;
+    bytes4  requiredSelector;
+    uint256 requiredValue;
+    bytes32 requiredCalldataHash; // optional (0 = skip)
 }
 ```
 
 ## Args
 ```solidity
 struct Args {
-    bytes32 promptHash;    // hash of the model prompt
-    bytes32 responseHash;  // hash of the model response
-    uint256 timestamp;     // proof issuance time
-    bytes   signature;     // Venice TEE ECDSA signature
+    bytes32 promptHash;
+    bytes32 responseHash;
+    uint256 timestamp;
+    bytes   signature;
 }
 ```
+
+---
 
 ## What it does NOT verify
 
 - Prompt contents
 - Response contents
-- Decision correctness
-- That the TEE explicitly authorized this exact calldata (TEE does not sign the execution envelope)
+- Model correctness
+- That the TEE explicitly authorized this exact calldata
 
-It proves: **a specific AI execution occurred inside a trusted TEE, and constrains how that proof can be used for delegated execution.**
+It proves: **a real AI inference occurred inside a trusted TEE, and its proof is bound to a specific execution and enforced onchain.**
 
-## Architecture difference
+---
 
-- **OnlyAgent** → contract enforces proof
-- **OnlyAgentProofCaveat** → wallet enforces proof
+## Architecture
 
-This makes proof enforcement composable across any contract via delegation.
+- **OnlyAgent** → contract-level enforcement
+- **OnlyAgentProofCaveat** → delegation-level enforcement
+
+This makes enforcement composable, reusable, and protocol-level.
+
+---
+
+## End-to-end flow
+```
+Venice TEE executes inference
+→ signs promptHash:responseHash
+→ delegation created with caveat terms
+→ redeemer submits via DelegationManager
+→ caveat verifies:
+    signer
+    freshness
+    chain
+    execution (target, selector, value, calldata hash)
+→ execution proceeds or reverts
+```
+
+---
+
+## Security properties
+
+- Execution-bound authorization
+- Non-reusable proofs
+- Replay protection (chain + time)
+- Onchain enforcement (no trust in relayer or UI)
+- Deterministic verification
+
+---
 
 ## Test coverage
 
 - valid proof passes
 - invalid signer rejected
 - stale proof rejected
-- wrong target rejected
 - wrong chain rejected
+- wrong target rejected
 - wrong selector rejected
-- calldata too short rejected
 - wrong value rejected
 - wrong calldata hash rejected
-- correct value passes
-- correct calldata hash passes
+- short calldata rejected
+
+---
 
 ## Status
 
-v5 — full execution envelope binding
+v5 — full execution envelope binding (ERC-7579 compliant)
 
 | Layer | Enforced by |
 |---|---|
 | TEE inference proof | Venice enclave signature |
 | Chain | Caveat (onchain) |
 | Freshness | Caveat (onchain) |
-| Target | Caveat (from executionCalldata) |
-| Selector | Caveat (from executionCalldata) |
-| Value | Caveat (from executionCalldata) |
-| Calldata hash | Caveat (from executionCalldata) |
+| Target | Execution-derived |
+| Selector | Execution-derived |
+| Value | Execution-derived |
+| Calldata hash | Execution-derived |
+
+---
+
+## Live demo
+
+See [DEMO.md](./DEMO.md) for verified Base Mainnet execution.
+
+---
+
+## Summary
+
+OnlyAgentProofCaveat introduces a new permission model:
+
+**Delegated execution gated by non-reusable, execution-bound AI proofs, enforced entirely onchain.**
