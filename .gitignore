@@ -21,3 +21,5 @@
 .env
 .env.local
 .env.*.local
+secrets/
+.sops.yaml
