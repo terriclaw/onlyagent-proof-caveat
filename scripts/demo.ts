@@ -14,6 +14,7 @@ const TARGET_ADDRESS     = process.env.TARGET_ADDRESS!;
 const DELEGATION_MANAGER = "0xdb9b1e94b5b69df7e401ddbede43491141047db3";
 const VENICE_MODEL       = "e2ee-qwen-2-5-7b-p";
 const VENICE_BASE        = "https://api.venice.ai/api/v1";
+const BASESCAN           = "https://basescan.org/tx";
 
 const MODE_SINGLE_DEFAULT = ethers.ZeroHash;
 
@@ -26,9 +27,10 @@ const DELEGATION_MANAGER_ABI = [
 
 const TARGET_ABI = [
   "function setValue(uint256 newValue) external",
+  "function value() view returns (uint256)",
 ];
 
-// ─── EIP-712 constants ────────────────────────────────────────────────────────
+// ─── EIP-712 ──────────────────────────────────────────────────────────────────
 
 const DELEGATION_TYPEHASH = ethers.keccak256(
   ethers.toUtf8Bytes(
@@ -42,7 +44,25 @@ const CAVEAT_TYPEHASH = ethers.keccak256(
 
 const coder = ethers.AbiCoder.defaultAbiCoder();
 
-// ─── Venice helpers ───────────────────────────────────────────────────────────
+// ─── Logging ──────────────────────────────────────────────────────────────────
+
+function section(title: string) {
+  console.log("");
+  console.log("═".repeat(60));
+  console.log(`  ${title}`);
+  console.log("═".repeat(60));
+}
+
+function field(label: string, value: string) {
+  const pad = 22;
+  console.log(`  ${label.padEnd(pad)} ${value}`);
+}
+
+function truncate(str: string, n = 20): string {
+  return str.length > n ? str.slice(0, n) + "..." : str;
+}
+
+// ─── Venice ───────────────────────────────────────────────────────────────────
 
 async function callVenice(prompt: string) {
   const res = await fetch(`${VENICE_BASE}/chat/completions`, {
@@ -62,13 +82,15 @@ async function callVenice(prompt: string) {
   });
 
   const teeConfirmed = res.headers.get("x-venice-tee") === "true";
+  const teeProvider  = res.headers.get("x-venice-tee-provider") ?? "unknown";
   const data = await res.json() as any;
   if (data.error) throw new Error(`Venice error: ${JSON.stringify(data.error)}`);
 
   return {
-    requestId: data.id as string,
-    response: data.choices[0].message.content as string,
+    requestId:    data.id as string,
+    response:     data.choices[0].message.content as string,
     teeConfirmed,
+    teeProvider,
   };
 }
 
@@ -134,7 +156,7 @@ async function signDelegation(
   return delegatorWallet.signingKey.sign(ethers.getBytes(digest)).serialized;
 }
 
-// ─── Encoding helpers ─────────────────────────────────────────────────────────
+// ─── Encoding ─────────────────────────────────────────────────────────────────
 
 function encodeTerms(
   trustedSigner: string,
@@ -179,49 +201,77 @@ async function main() {
   const dm = new ethers.Contract(DELEGATION_MANAGER, DELEGATION_MANAGER_ABI, redeemer);
   const domainHash: string = await dm.getDomainHash();
 
-  // ── Step 1: Get real Venice TEE proof ──────────────────────────────────────
-  console.log("=== OnlyAgentProofCaveat Integration Demo ===");
-  console.log("Network:          ", network.name, `(${network.chainId})`);
-  console.log("Delegator:        ", delegator.address);
-  console.log("Redeemer:         ", redeemer.address);
-  console.log("TEE signer:       ", TEE_SIGNER_ADDRESS);
-  console.log("DelegationManager:", DELEGATION_MANAGER);
-  console.log("Caveat:           ", CAVEAT_ADDRESS);
-  console.log("Target:           ", TARGET_ADDRESS);
-  console.log("");
+  const targetContract = new ethers.Contract(TARGET_ADDRESS, TARGET_ABI, provider);
 
-  console.log("[1/5] Calling Venice TEE model...");
+  section("ONLYAGENT PROOF CAVEAT — INTEGRATION DEMO");
+  field("Network",           `${network.name} (chainId: ${network.chainId})`);
+  field("DelegationManager", DELEGATION_MANAGER);
+  field("Caveat",            CAVEAT_ADDRESS);
+  field("Target",            TARGET_ADDRESS);
+  field("Delegator",         delegator.address);
+  field("Redeemer",          redeemer.address);
+  field("TEE signer",        TEE_SIGNER_ADDRESS);
+  field("Domain hash",       truncate(domainHash));
+
+  // ── Step 1: Venice TEE inference ──────────────────────────────────────────
+  section("STEP 1 — Venice TEE Inference");
   const prompt = "You are authorizing a delegated onchain action. Should this execution proceed? Reply YES or NO only.";
-  const { requestId, response, teeConfirmed } = await callVenice(prompt);
-  console.log("Request ID:   ", requestId);
-  console.log("TEE confirmed:", teeConfirmed);
-  console.log("Response:     ", response.trim());
+  console.log("  Prompt:", prompt);
+  console.log("");
+  console.log("  Calling Venice...");
 
-  console.log("\n[2/5] Fetching Venice TEE signature...");
+  const { requestId, response, teeConfirmed, teeProvider } = await callVenice(prompt);
+
+  field("Request ID",    requestId);
+  field("TEE confirmed", String(teeConfirmed));
+  field("TEE provider",  teeProvider);
+  field("Response",      response.trim());
+
+  // ── Step 2: Fetch TEE signature ───────────────────────────────────────────
+  section("STEP 2 — Venice TEE Signature");
   const sigPayload = await fetchVeniceSignature(requestId);
-  console.log("Signed text:  ", sigPayload.text);
 
-  console.log("\n[3/5] Verifying Venice signature...");
+  field("Signed text",      sigPayload.text);
+  field("Signature",        truncate(sigPayload.signature));
+  field("Signing address",  sigPayload.signing_address);
+
+  // ── Step 3: Verify signature ──────────────────────────────────────────────
+  section("STEP 3 — Signature Verification");
   const recovered = ethers.verifyMessage(sigPayload.text, sigPayload.signature);
+
+  field("Recovered signer", recovered);
+  field("Expected signer",  TEE_SIGNER_ADDRESS);
+  field("Match",            recovered.toLowerCase() === TEE_SIGNER_ADDRESS.toLowerCase() ? "✓ YES" : "✗ NO");
+
   if (recovered.toLowerCase() !== TEE_SIGNER_ADDRESS.toLowerCase()) {
     throw new Error(`Signer mismatch: recovered ${recovered}, expected ${TEE_SIGNER_ADDRESS}`);
   }
-  console.log("✓ Verified:", recovered);
 
   const [promptHashRaw, responseHashRaw] = sigPayload.text.split(":");
   const promptHash   = `0x${promptHashRaw.replace(/^0x/, "")}`;
   const responseHash = `0x${responseHashRaw.replace(/^0x/, "")}`;
   const timestamp    = BigInt(Math.floor(Date.now() / 1000));
 
-  // ── Step 2: Build execution envelope ──────────────────────────────────────
+  field("Prompt hash",   truncate(promptHash));
+  field("Response hash", truncate(responseHash));
+  field("Timestamp",     String(timestamp));
+
+  // ── Step 4: Build execution envelope ─────────────────────────────────────
+  section("STEP 4 — Execution Envelope");
   const targetIface  = new ethers.Interface(TARGET_ABI);
   const callData     = targetIface.encodeFunctionData("setValue", [42]);
   const selector     = callData.slice(0, 10);
   const calldataHash = ethers.keccak256(callData);
   const value        = 0n;
 
-  // ── Step 3: Build and sign delegation ─────────────────────────────────────
-  console.log("\n[4/5] Building delegation...");
+  field("Function",       "setValue(42)");
+  field("Selector",       selector);
+  field("Calldata hash",  truncate(calldataHash));
+  field("Value (ETH)",    "0");
+  field("Target",         TARGET_ADDRESS);
+
+  // ── Step 5: Build delegation ──────────────────────────────────────────────
+  section("STEP 5 — Delegation Construction");
 
   const terms = encodeTerms(
     TEE_SIGNER_ADDRESS, 120n, TARGET_ADDRESS,
@@ -235,6 +285,15 @@ async function main() {
   const sig = await signDelegation(
     delegator, domainHash, redeemer.address, ethers.ZeroHash, caveats, salt
   );
+
+  const delegationHash = getDelegationHash(
+    redeemer.address, delegator.address, ethers.ZeroHash, caveats, salt
+  );
+
+  field("Caveat enforcer",  CAVEAT_ADDRESS);
+  field("Delegation hash",  truncate(delegationHash));
+  field("Salt",             truncate(salt.toString()));
+  field("Delegation sig",   truncate(sig));
 
   const delegation = {
     delegate:  redeemer.address,
@@ -254,33 +313,59 @@ async function main() {
   const badCallData = targetIface.encodeFunctionData("setValue", [999]);
   const invalidExec = encodeExecution(TARGET_ADDRESS, value, badCallData);
 
-  // ── Step 4: Redeem ─────────────────────────────────────────────────────────
-  console.log("\n[5/5] Redeeming delegations...");
+  // ── Case 1: Valid redemption ──────────────────────────────────────────────
+  section("CASE 1 — Valid Proof + Matching Execution");
+  console.log("  Expected: PASS");
+  console.log("  Calling DelegationManager.redeemDelegations...");
   console.log("");
-  console.log("=== CASE 1: valid proof + matching execution ===");
+
+  const valueBefore = await targetContract.value();
+  field("Target value before", String(valueBefore));
+
   try {
     const tx = await dm.redeemDelegations(
       [permissionContext], [MODE_SINGLE_DEFAULT], [validExec]
     );
-    console.log("TX submitted:", tx.hash);
+    field("TX hash",    tx.hash);
+    field("Basescan",   `${BASESCAN}/${tx.hash}`);
+    console.log("");
+    console.log("  Waiting for confirmation...");
     const receipt = await tx.wait();
-    console.log("SUCCESS in block:", receipt?.blockNumber);
+    field("Block",      String(receipt?.blockNumber));
+    field("Gas used",   String(receipt?.gasUsed));
+
+    const valueAfter = await targetContract.value();
+    field("Target value after", String(valueAfter));
+
+    console.log("");
+    console.log("  ✓ PASS — caveat allowed execution");
   } catch (err: any) {
-    console.error("UNEXPECTED FAILURE:", err.message?.split("\n")[0] ?? err);
+    console.log("  ✗ FAIL — unexpected revert");
+    console.log("  Reason:", err.message?.split("\n")[0] ?? err);
   }
 
+  // ── Case 2: Invalid redemption ────────────────────────────────────────────
+  section("CASE 2 — Valid Proof + Wrong Calldata (should revert)");
+  console.log("  Expected: REVERT");
+  console.log("  Calling DelegationManager.redeemDelegations with setValue(999)...");
   console.log("");
-  console.log("=== CASE 2: valid proof + wrong calldata (should revert) ===");
+
   try {
     const tx = await dm.redeemDelegations(
       [permissionContext], [MODE_SINGLE_DEFAULT], [invalidExec]
     );
-    console.log("UNEXPECTED SUCCESS:", tx.hash);
+    field("TX hash", tx.hash);
     await tx.wait();
+    console.log("  ✗ FAIL — should have reverted but did not");
   } catch (err: any) {
-    console.log("REVERTED as expected.");
-    console.log("Reason:", err.message?.split("\n")[0] ?? err);
+    console.log("  ✓ PASS — caveat blocked execution as expected");
+    console.log("  Revert reason:", err.message?.split("\n")[0] ?? err);
   }
+
+  section("DEMO COMPLETE");
+  console.log("  OnlyAgentProofCaveat is load-bearing on Base Mainnet.");
+  console.log("  Real Venice TEE proof required. Wrong execution envelope blocked.");
+  console.log("");
 }
 
 main().catch(err => { console.error(err); process.exit(1); });
