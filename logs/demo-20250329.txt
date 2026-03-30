@@ -1,0 +1,99 @@
+════════════════════════════════════════════════════════════
+  ONLYAGENT PROOF CAVEAT — INTEGRATION DEMO
+════════════════════════════════════════════════════════════
+  Network                base (chainId: 8453)
+  DelegationManager      0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3
+  Caveat                 0xA7858cbB8be2cD50cc9e04e62eCD58BF86381137
+  Target                 0x6bAaC44B3Dc269012829e591d256Ea8d5D8F15Db
+  Delegator              0xb33e1c66935Ec6c30900fA0DdD51e1C53412cd22
+  Redeemer               0x94Cfa81e2e750692BC1dd36bB655f08a718090DB
+  TEE signer             0xc4045be3413B0B30ad0295985fe5e037Dc0EeB0c
+  Domain hash            0x8d2d5589afbd2ea476...
+
+════════════════════════════════════════════════════════════
+  STEP 1 — Venice TEE Inference
+════════════════════════════════════════════════════════════
+  Prompt: You are authorizing a delegated onchain action. Should this execution proceed? Reply YES or NO only.
+
+  Calling Venice...
+  Request ID             chatcmpl-d3d781521ed642399215aaa61d2a91ad
+  TEE confirmed          true
+  TEE provider           phala
+  Response               YES
+
+════════════════════════════════════════════════════════════
+  STEP 2 — Venice TEE Signature
+════════════════════════════════════════════════════════════
+  Signed text            ce6923daff4310611d7d539a09c9353a6fa2d2a8543ceb7424b0175db267c35d:b2b4de32544263fe33c33d87ab729ff4f3c4cd668d788cb23b57a83158ec53ba
+  Signature              0x5bcc24fccdb69978a1...
+  Signing address        0xc4045be3413B0B30ad0295985fe5e037Dc0EeB0c
+
+════════════════════════════════════════════════════════════
+  STEP 3 — Signature Verification
+════════════════════════════════════════════════════════════
+  Recovered signer       0xc4045be3413B0B30ad0295985fe5e037Dc0EeB0c
+  Expected signer        0xc4045be3413B0B30ad0295985fe5e037Dc0EeB0c
+  Match                  ✓ YES
+  Prompt hash            0xce6923daff4310611d...
+  Response hash          0xb2b4de32544263fe33...
+  Timestamp              1774840970
+
+════════════════════════════════════════════════════════════
+  STEP 4 — Execution Envelope
+════════════════════════════════════════════════════════════
+  Function               setValue(42)
+  Selector               0x55241077
+  Calldata hash          0x1ba4ef4b044b349263...
+  Value (ETH)            0
+  Target                 0x6bAaC44B3Dc269012829e591d256Ea8d5D8F15Db
+
+════════════════════════════════════════════════════════════
+  STEP 5 — Caveat Encoding
+════════════════════════════════════════════════════════════
+  Caveat enforcer        0xA7858cbB8be2cD50cc9e04e62eCD58BF86381137
+  Terms                  0x000000000000000000...
+  Args                   0x000000000000000000...
+
+════════════════════════════════════════════════════════════
+  STEP 6 — Delegation Construction
+════════════════════════════════════════════════════════════
+  Delegator              0xb33e1c66935Ec6c30900fA0DdD51e1C53412cd22
+  Delegate               0x94Cfa81e2e750692BC1dd36bB655f08a718090DB
+  Signature              0xaf69131c05e9ba57c6...
+
+════════════════════════════════════════════════════════════
+  STEP 7 — Redemption Encoding
+════════════════════════════════════════════════════════════
+  Valid calldata         0xcef6d2090000000000...
+  Invalid calldata       0xcef6d2090000000000...
+
+════════════════════════════════════════════════════════════
+  CASE 1 — Valid Proof + Matching Execution
+════════════════════════════════════════════════════════════
+  Expected: PASS
+
+  Target value before    0
+  TX hash                0x6659597eaba681ca50523b268a85d533885b129f01fc930bd3a2dd53b9708e4e
+  Basescan               https://basescan.org/tx/0x6659597eaba681ca50523b268a85d533885b129f01fc930bd3a2dd53b9708e4e
+
+  Waiting for confirmation...
+  Block                  44025813
+  Gas used               286095
+  Target value after     42
+
+  ✓ PASS — caveat allowed execution
+
+════════════════════════════════════════════════════════════
+  CASE 2 — Valid Proof + Wrong Calldata (should revert)
+════════════════════════════════════════════════════════════
+  Expected: REVERT
+
+  ✓ PASS — caveat blocked execution as expected
+  Revert reason: execution reverted (unknown custom error) 0xeb38420e (WrongCalldataHash)
+
+════════════════════════════════════════════════════════════
+  DEMO COMPLETE
+════════════════════════════════════════════════════════════
+  OnlyAgentProofCaveat is load-bearing on Base Mainnet.
+  Real Venice TEE proof required.
+  Wrong execution envelope blocked.
