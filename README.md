@@ -10,11 +10,12 @@ A CaveatEnforcer that requires attested AI inference as a prerequisite for deleg
 
 A valid proof can only authorize one specific execution:
 ```
-(promptHash, responseHash, executionHash, chainId, timestamp) must match
+(promptHash, responseHash, execution(target, value, calldata), chainId, timestamp) must match
 ```
 
 - `executionHash = keccak256(abi.encodePacked(target, value, calldata))` (ERC-7579)
 - Proofs cannot be reused across different executions, chains, or time windows
+- Enforced at redemption via DelegationManager
 
 ---
 
@@ -56,6 +57,7 @@ At redemption time, the caveat enforces:
   - calldata hash
 
 All fields are verified **onchain**.
+Derived directly from `_executionCalldata`, not user-supplied metadata.
 
 ---
 
@@ -72,7 +74,7 @@ This ensures:
 - Same proof + different chain → revert
 - Same proof + expired timestamp → revert
 
-Authorization is deterministic, non-transferable, and non-replayable.
+Authorization is deterministic, non-transferable, and non-replayable at the execution level.
 
 ---
 
