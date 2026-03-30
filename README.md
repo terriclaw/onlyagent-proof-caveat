@@ -191,4 +191,4 @@ v5 — full execution envelope binding (ERC-7579 compliant)
 
 ## Live demo
 
-See [DEMO.md](./DEMO.md) for verified Base Mainnet execution.
+See [DEMO.md](./DEMO.md) for verified Base Mainnet execution and [logs/demo-20250329.txt](./logs/demo-20250329.txt) for full output.

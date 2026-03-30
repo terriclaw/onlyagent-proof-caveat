@@ -23,6 +23,12 @@ The proof is not reusable across different executions or chains.
 
 All fields are verified onchain inside the caveat.
 
+## Demo log
+
+Full output: [logs/demo-20250329.txt](./logs/demo-20250329.txt)
+
+---
+
 ## Verified TX
 
 - **Case 1 (pass):** [0x6659597eaba681ca50523b268a85d533885b129f01fc930bd3a2dd53b9708e4e](https://basescan.org/tx/0x6659597eaba681ca50523b268a85d533885b129f01fc930bd3a2dd53b9708e4e)
