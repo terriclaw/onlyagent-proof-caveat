@@ -4,14 +4,19 @@ Verified execution on Base Mainnet. Block 44025813.
 
 ## What was proved
 
-Same Venice TEE proof. Same delegation. Two executions:
+A single signed Venice TEE proof was reused across two executions:
 
 | Case | Execution | Result |
 |---|---|---|
-| 1 | `setValue(42)` — matches caveat terms | ✓ Allowed. Target value changed 0 → 42. |
-| 2 | `setValue(999)` — calldata hash mismatch | ✗ Blocked. `WrongCalldataHash()` revert. |
+| 1 | `setValue(42)` — calldata hash matches proof | ✓ Allowed. State changed 0 → 42 |
+| 2 | `setValue(999)` — calldata hash mismatch | ✗ Reverted (`WrongCalldataHash()`) |
 
-The caveat enforces `(proof, execution) → must match` — not just `"agent said yes"`.
+The caveat enforces:
+```
+(promptHash, responseHash, executionHash) must match
+```
+
+The proof is not reusable across different executions.
 
 ## Verified TX
 
@@ -44,5 +49,8 @@ Venice TEE executes model inference
 → caveat verifies: signer, freshness, chain, target, selector, value, calldata hash
 → execution proceeds or reverts
 ```
+
+The proof is bound to a specific execution envelope via calldata hash.
+Reusing the same proof with different calldata fails onchain.
 
 No mocks. No frontend. Real smart account. Real TEE proof. Real enforcement.
