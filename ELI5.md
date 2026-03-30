@@ -12,7 +12,7 @@ The conditions are enforced by a **caveat enforcer** — a smart contract that a
 
 This caveat is a bouncer that says:
 
-> "I will only let this transaction through if someone can prove an AI actually thought about it first — and the transaction matches exactly what was authorized."
+> "I will only let this transaction through if someone can prove an AI actually ran — and the transaction matches the constraints tied to that proof."
 
 Specifically it checks:
 
@@ -25,6 +25,11 @@ Specifically it checks:
 7. **Is the exact calldata correct?** — full payload hash must match
 
 If any of those fail, the transaction is blocked. All of them must pass.
+
+**Important:** the AI does NOT sign the transaction itself.
+
+The AI only signs `(promptHash, responseHash)`.
+The caveat is what ties that proof to this exact transaction.
 
 ## Why does it matter?
 
